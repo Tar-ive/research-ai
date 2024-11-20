@@ -7,6 +7,12 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from pathlib import Path
+import os
+from dotenv import load_dotenv
+import requests
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configuration
 @dataclass
@@ -95,7 +101,7 @@ AGENT_CONFIGS = {
 }
 
 # Perplexity API Configuration
-PERPLEXITY_API_KEY = "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"  # Replace with your actual API key
+PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 
 # Logging Setup
 class LogManager:
