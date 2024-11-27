@@ -1,0 +1,8 @@
+exa-py
+streamlit
+networkx
+plotly
+requests
+python-dotenv
+scipy 
+groq
