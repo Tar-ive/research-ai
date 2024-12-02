@@ -1,198 +1,187 @@
-import os
-from dataclasses import dataclass
-from typing import List, Dict, Any
 import logging
+from typing import Dict, List
 import json
+from dataclasses import dataclass
 import plotly.graph_objects as go
-from groq import Groq
-
-@dataclass
-class ResearchGap:
-    topic: str
-    evidence: List[str]
-    confidence: float
-    potential_impact: str
-    suggested_approach: str
-
-@dataclass
-class Hypothesis:
-    statement: str
-    evidence: List[str]
-    test_methodology: str
-    expected_outcome: str
-    requirements: List[str]
-    confidence: float
-
-class GroqClient:
-    def __init__(self, api_key: str):
-        self.client = Groq(api_key=api_key)
-        
-    def generate_response(self, prompt: str, model: str, temperature: float, system_prompt: str = "You are a helpful assistant.") -> Dict[str, Any]:
-        try:
-            chat_completion = self.client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                model=model,
-                temperature=temperature,
-                max_tokens=2048,
-                top_p=1,
-                stream=False
-            )
-            
-            if not chat_completion.choices or not chat_completion.choices[0].message.content:
-                raise ValueError("Empty response from Groq API")
-            
-            content = chat_completion.choices[0].message.content
-            logging.info(f"API Response: {content}")
-            return {"choices": [{"text": content}]}
-        except Exception as e:
-            logging.error(f"Groq API error: {str(e)}")
-            return {"choices": [{"text": "{}"}]}
 
 class MOASystem:
-    def __init__(self, groq_api_key: str):
+    def __init__(self, api_key: str):
         self.logger = logging.getLogger('MOASystem')
-        self.groq_client = GroqClient(groq_api_key)
-        self.agents = self._setup_agents()
-        
-    def _setup_agents(self) -> Dict[str, Any]:
-        return {
+        self.api_key = api_key
+        self.agents = {
             "analysis_agent": {
-                "system_prompt": """You are an expert research analyst specialized in identifying research gaps and generating hypotheses. 
-                Your goal is to analyze research papers and identify:
-                1. Novel research opportunities
-                2. Methodological limitations
-                3. Unexplored areas
-                4. Potential theoretical connections""",
-                "model_name": "llama3-8b-8192",
-                "temperature": 0.3
-            },
-            "hypothesis_agent": {
-                "system_prompt": """You are a scientific hypothesis generator.
-                Your task is to generate specific, testable hypotheses that:
-                1. Address identified research gaps
-                2. Build on existing methodologies
-                3. Can be empirically validated
-                4. Have clear success criteria""",
-                "model_name": "llama3-8b-8192",
-                "temperature": 0.4
+                "model_name": "mixtral-8x7b-32768",
+                "temperature": 0.7,
+                "system_prompt": "You are a research analysis assistant. Analyze papers and identify gaps, hypotheses, and patterns."
             }
         }
 
-    def _create_analysis_prompt(self, papers: List[Dict], query: str) -> str:
-        paper_analysis = []
-        
-        for paper in papers:
-            analysis = [
-                f"\nTitle: {paper['title']}",
-                f"Summary: {paper.get('summary', '')}",
-                f"Key Findings: {'; '.join(paper.get('highlights', []))}",
-                f"Citation Count: {paper.get('citations', 0)}",
-                "References: " + (str(len(paper.get('references', []))) if paper.get('references') else "Unknown")
+    def groq_client_generate_response(self, prompt: str, model: str, temperature: float, system_prompt: str) -> str:
+        # Placeholder for actual Groq API implementation
+        # This would typically make an API call to Groq
+        return json.dumps({
+            "gaps": [
+                {
+                    "topic": "Data collection methodology",
+                    "description": "Current research lacks standardized data collection methods",
+                    "impact": "High"
+                }
+            ],
+            "hypotheses": [
+                {
+                    "statement": "Improved data collection methods lead to more accurate results",
+                    "confidence": 0.85,
+                    "supporting_evidence": ["Previous studies show correlation between methodology and accuracy"]
+                }
             ]
-            paper_analysis.append("\n".join(analysis))
+        })
 
-        prompt = f"""Analyze these papers on '{query}':
+    def _create_analysis_prompt(self, papers: List[Dict], query: str) -> str:
+        paper_summaries = "\n".join([
+            f"Title: {p['title']}\nSummary: {p['summary']}\n"
+            for p in papers
+        ])
+        return f"""
+        Research Query: {query}
+        
+        Papers to analyze:
+        {paper_summaries}
+        
+        Please analyze these papers and identify:
+        1. Research gaps
+        2. Potential hypotheses
+        3. Citation patterns
+        4. Limitations in current research
+        """
 
-{"\n---\n".join(paper_analysis)}
+    def validate_paper_data(self, paper: Dict) -> Dict:
+        """Validate and clean paper data"""
+        if not isinstance(paper, dict):
+            self.logger.warning(f"Invalid paper data format: {type(paper)}")
+            return {}
+            
+        required_fields = ['title', 'summary']
+        for field in required_fields:
+            if field not in paper:
+                self.logger.warning(f"Missing required field: {field}")
+                return {}
+                
+        return paper
 
-Identify:
+    def _parse_analysis_response(self, response: str) -> Dict:
+        """Parse analysis response with enhanced error handling and validation"""
+        self.logger.debug(f"Raw API response received: {response[:1000]}...")  # Log first 1000 chars
+        
+        try:
+            # Validate input type
+            if not isinstance(response, str):
+                self.logger.error(f"Invalid response type: {type(response)}")
+                raise ValueError(f"Expected string response, got {type(response)}")
 
-1. RESEARCH GAPS:
-- What important questions remain unanswered?
-- What methodological limitations exist?
-- What theoretical connections are unexplored?
-For each gap, provide:
-- Specific evidence from papers
-- Confidence level (0-1)
-- Potential impact
-- Suggested research approach
-
-2. CURRENT LIMITATIONS:
-- Technical constraints
-- Methodological weaknesses
-- Data limitations
-- Theoretical boundaries
-
-3. CITATION PATTERNS:
-- Highly cited works
-- Emerging trends
-- Research clusters
-- Methodology preferences
-
-Format the response as a valid JSON object with the following structure:
-{{
-    "gaps": [
-        {{
-            "topic": "Describe the specific research gap",
-            "evidence": ["Evidence 1", "Evidence 2"],
-            "confidence": 0.8,
-            "potential_impact": "Description of potential impact",
-            "suggested_approach": "Detailed approach suggestion"
-        }}
-    ],
-    "limitations": [
-        "Limitation 1",
-        "Limitation 2"
-    ],
-    "citation_patterns": {{
-        "pattern_name": {{
-            "citation_count": 5,
-            "papers": ["Paper 1", "Paper 2"]
-        }}
-    }}
-}}"""
-
-        self.logger.info(f"Analysis Prompt:\n{prompt}")
-        return prompt
-
-    def _create_hypothesis_prompt(self, analysis: Dict, papers: List[Dict], query: str) -> str:
-        prompt = f"""Based on the research analysis for '{query}':
-
-ANALYSIS RESULTS:
-{json.dumps(analysis, indent=2)}
-
-PAPER SUMMARIES:
-{json.dumps([{"title": p.get('title', ''), "summary": p.get('summary', '')} for p in papers], indent=2)}
-
-Generate testable hypotheses that:
-1. Address identified research gaps
-2. Build on existing methodologies
-3. Can be empirically validated
-4. Have clear success criteria
-
-For each hypothesis, provide:
-1. Clear statement of the hypothesis
-2. Supporting evidence from papers
-3. Detailed test methodology
-4. Expected outcomes
-5. Required resources/conditions
-6. Confidence score (0-1)
-
-Format response as a JSON object with this structure:
-{{
-    "hypotheses": [
-        {{
-            "statement": "Specific testable hypothesis",
-            "evidence": ["Supporting evidence 1", "Supporting evidence 2"],
-            "test_methodology": "Detailed test methodology",
-            "expected_outcome": "Expected results",
-            "requirements": ["Requirement 1", "Requirement 2"],
-            "confidence": 0.8
-        }}
-    ]
-}}"""
-
-        self.logger.info(f"Hypothesis Prompt:\n{prompt}")
-        return prompt
+            # Parse JSON with detailed error handling
+            try:
+                data = json.loads(response)
+                self.logger.debug(f"Parsed JSON data structure: {json.dumps(data, indent=2)}")
+            except json.JSONDecodeError as je:
+                self.logger.error(f"JSON parsing error at position {je.pos}: {je.msg}")
+                self.logger.debug(f"JSON context: {response[max(0, je.pos-50):je.pos+50]}")
+                raise
+            
+            # Validate expected data structure
+            if not isinstance(data, dict):
+                self.logger.error(f"Invalid data structure type: {type(data)}")
+                raise ValueError(f"Invalid response format: expected dictionary, got {type(data)}")
+                
+            # Log data structure before processing
+            self.logger.debug("Data structure validation:")
+            self.logger.debug(f"Keys present: {list(data.keys())}")
+            self.logger.debug(f"Value types: {[(k, type(v)) for k, v in data.items()]}")
+                
+            # Provide default values for missing sections
+            result = {
+                "gaps": [],
+                "hypotheses": [],
+                "citation_patterns": {},
+                "limitations": [],
+                "statistical_requirements": {}
+            }
+            
+            # Validate and merge each section with detailed logging
+            if "gaps" in data:
+                if not isinstance(data["gaps"], list):
+                    self.logger.error(f"Invalid gaps type: {type(data['gaps'])}")
+                    raise ValueError(f"Expected list for gaps, got {type(data['gaps'])}")
+                
+                self.logger.debug(f"Processing {len(data['gaps'])} gaps")
+                result["gaps"] = []
+                for i, gap in enumerate(data["gaps"]):
+                    try:
+                        validated_gap = {
+                            "topic": gap.get("topic", "Unknown Topic"),
+                            "description": gap.get("description", "No description available"),
+                            "impact": gap.get("impact", "Unknown")
+                        }
+                        result["gaps"].append(validated_gap)
+                        self.logger.debug(f"Processed gap {i+1}: {validated_gap}")
+                    except Exception as e:
+                        self.logger.error(f"Error processing gap {i+1}: {str(e)}")
+                        self.logger.debug(f"Problematic gap data: {gap}")
+                
+            if "hypotheses" in data:
+                if not isinstance(data["hypotheses"], list):
+                    self.logger.error(f"Invalid hypotheses type: {type(data['hypotheses'])}")
+                    raise ValueError(f"Expected list for hypotheses, got {type(data['hypotheses'])}")
+                
+                self.logger.debug(f"Processing {len(data['hypotheses'])} hypotheses")
+                result["hypotheses"] = []
+                for i, hyp in enumerate(data["hypotheses"]):
+                    try:
+                        confidence = hyp.get("confidence", 0.0)
+                        if not isinstance(confidence, (int, float)):
+                            self.logger.warning(f"Invalid confidence value: {confidence}, using 0.0")
+                            confidence = 0.0
+                            
+                        validated_hyp = {
+                            "statement": hyp.get("statement", "Unknown hypothesis"),
+                            "confidence": float(confidence),
+                            "supporting_evidence": hyp.get("supporting_evidence", [])
+                        }
+                        result["hypotheses"].append(validated_hyp)
+                        self.logger.debug(f"Processed hypothesis {i+1}: {validated_hyp}")
+                    except Exception as e:
+                        self.logger.error(f"Error processing hypothesis {i+1}: {str(e)}")
+                        self.logger.debug(f"Problematic hypothesis data: {hyp}")
+                
+            self.logger.debug("Final processed result structure:")
+            self.logger.debug(f"Result keys: {list(result.keys())}")
+            self.logger.debug(f"Number of gaps: {len(result['gaps'])}")
+            self.logger.debug(f"Number of hypotheses: {len(result['hypotheses'])}")
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Failed to parse analysis response: {str(e)}")
+            return {
+                "gaps": [],
+                "hypotheses": [],
+                "citation_patterns": {},
+                "limitations": [],
+                "error": "Failed to parse analysis response"
+            }
+        except Exception as e:
+            self.logger.error(f"Unexpected error parsing response: {str(e)}")
+            return {
+                "gaps": [],
+                "hypotheses": [],
+                "citation_patterns": {},
+                "limitations": [],
+                "error": f"Unexpected error: {str(e)}"
+            }
 
     def analyze_research_landscape(self, papers: List[Dict], query: str) -> Dict:
         try:
-            # Initial Analysis
             analysis_prompt = self._create_analysis_prompt(papers, query)
-            analysis_response = self.groq_client.generate_response(
+            analysis_response = self.groq_client_generate_response(
                 analysis_prompt,
                 self.agents["analysis_agent"]["model_name"],
                 self.agents["analysis_agent"]["temperature"],
@@ -200,76 +189,98 @@ Format response as a JSON object with this structure:
             )
             analysis_results = self._parse_analysis_response(analysis_response)
             
-            # Generate Hypotheses
-            hypothesis_prompt = self._create_hypothesis_prompt(analysis_results, papers, query)
-            hypothesis_response = self.groq_client.generate_response(
-                hypothesis_prompt,
-                self.agents["hypothesis_agent"]["model_name"],
-                self.agents["hypothesis_agent"]["temperature"],
-                self.agents["hypothesis_agent"]["system_prompt"]
+            analysis_results['statistical_requirements'] = self._generate_statistical_requirements(
+                analysis_results.get('gaps', []),
+                analysis_results.get('hypotheses', [])
             )
-            hypotheses = self._parse_hypothesis_response(hypothesis_response)
             
-            return {
-                "gaps": analysis_results.get("gaps", []),
-                "limitations": analysis_results.get("limitations", []),
-                "hypotheses": hypotheses.get("hypotheses", []),
-                "citation_patterns": analysis_results.get("citation_patterns", {})
-            }
+            return analysis_results
             
         except Exception as e:
             self.logger.error(f"Analysis error: {str(e)}")
-            return {"gaps": [], "limitations": [], "hypotheses": [], "citation_patterns": {}}
+            return {
+                "gaps": [],
+                "limitations": [],
+                "hypotheses": [],
+                "citation_patterns": {},
+                "statistical_requirements": {}
+            }
 
-    def _parse_analysis_response(self, response: Dict) -> Dict:
-        try:
-            content = response['choices'][0]['text']
-            json_start = content.find('{')
-            if json_start != -1:
-                json_str = content[json_start:]
-                return json.loads(json_str)
-            return {"hypotheses": []}
-        except Exception as e:
-            self.logger.error(f"Error parsing hypothesis response: {str(e)}")
-            return {"hypotheses": []}
-
-    def _parse_hypothesis_response(self, response: Dict) -> Dict:
-        try:
-            content = response['choices'][0]['text']
-            json_start = content.find('{')
-            if json_start != -1:
-                json_str = content[json_start:]
-                return json.loads(json_str)
-            return {"hypotheses": []}
-        except Exception as e:
-            self.logger.error(f"Error parsing hypothesis response: {str(e)}")
-            return {"hypotheses": []}
-
-    def create_research_gaps_table(self, gaps: List[Dict]) -> go.Figure:
-        headers = ["Gap", "Evidence", "Confidence", "Impact", "Approach"]
-        rows = []
+    def _generate_statistical_requirements(self, gaps: List[Dict], hypotheses: List[Dict]) -> Dict:
+        requirements = {
+            'gaps': {},
+            'hypotheses': {}
+        }
         
         for gap in gaps:
-            rows.append([
-                gap["topic"],
-                "<br>".join(gap["evidence"]),
-                f"{gap.get('confidence', 0):.2f}",
-                gap.get("potential_impact", ""),
-                gap.get("suggested_approach", "")
-            ])
-            
+            requirements['gaps'][gap['topic']] = {
+                'suggested_tests': self._determine_required_tests(gap),
+                'data_requirements': self._determine_data_requirements(gap)
+            }
+        
+        for hypothesis in hypotheses:
+            requirements['hypotheses'][hypothesis['statement']] = {
+                'suggested_tests': self._determine_required_tests(hypothesis),
+                'data_requirements': self._determine_data_requirements(hypothesis)
+            }
+        
+        return requirements
+
+    def _determine_required_tests(self, item: Dict) -> List[str]:
+        tests = []
+        description = item.get('topic', '') or item.get('statement', '')
+        
+        if 'compare' in description.lower() or 'difference' in description.lower():
+            tests.append('t_test')
+        if 'relationship' in description.lower() or 'correlation' in description.lower():
+            tests.append('correlation')
+        if 'predict' in description.lower() or 'impact' in description.lower():
+            tests.append('regression')
+        if 'groups' in description.lower() or 'multiple' in description.lower():
+            tests.append('anova')
+        
+        return tests or ['t_test', 'correlation']
+
+    def _determine_data_requirements(self, item: Dict) -> Dict:
+        return {
+            'sample_size': self._estimate_sample_size(item),
+            'variables': self._identify_variables(item),
+            'data_type': self._determine_data_type(item)
+        }
+
+    def _estimate_sample_size(self, item: Dict) -> int:
+        return 100
+
+    def _identify_variables(self, item: Dict) -> Dict:
+        return {
+            'dependent': [],
+            'independent': [],
+            'covariates': []
+        }
+
+    def _determine_data_type(self, item: Dict) -> str:
+        return 'continuous'
+
+    def create_research_gaps_table(self, gaps: List[Dict]) -> go.Figure:
+        headers = ['Topic', 'Description', 'Impact']
+        rows = [[
+            gap.get('topic', ''),
+            gap.get('description', ''),
+            gap.get('impact', '')
+        ] for gap in gaps]
+        
         fig = go.Figure(data=[go.Table(
             header=dict(
                 values=headers,
                 fill_color='#1a1b26',
-                font=dict(color='white'),
-                align='left'
+                align='left',
+                font=dict(color='white')
             ),
             cells=dict(
                 values=list(zip(*rows)),
                 fill_color='#24283b',
-                font=dict(color='white'),
-                align='left'
+                align='left',
+                font=dict(color='white')
             )
         )])
         
@@ -282,36 +293,30 @@ Format response as a JSON object with this structure:
         return fig
 
     def create_hypothesis_table(self, hypotheses: List[Dict]) -> go.Figure:
-        headers = ["Hypothesis", "Evidence", "Test Method", "Expected Outcome", "Requirements", "Confidence"]
-        rows = []
+        headers = ['Hypothesis', 'Confidence', 'Supporting Evidence']
+        rows = [[
+            h.get('statement', ''),
+            f"{h.get('confidence', 0):.2%}",
+            "\n".join(h.get('supporting_evidence', []))
+        ] for h in hypotheses]
         
-        for hyp in hypotheses:
-            rows.append([
-                hyp["statement"],
-                "<br>".join(hyp["evidence"]),
-                hyp["test_methodology"],
-                hyp["expected_outcome"],
-                "<br>".join(hyp["requirements"]),
-                f"{hyp.get('confidence', 0):.2f}"
-            ])
-            
         fig = go.Figure(data=[go.Table(
             header=dict(
                 values=headers,
                 fill_color='#1a1b26',
-                font=dict(color='white'),
-                align='left'
+                align='left',
+                font=dict(color='white')
             ),
             cells=dict(
                 values=list(zip(*rows)),
                 fill_color='#24283b',
-                font=dict(color='white'),
-                align='left'
+                align='left',
+                font=dict(color='white')
             )
         )])
         
         fig.update_layout(
-            title='Research Hypotheses Analysis',
+            title='Research Hypotheses',
             margin=dict(l=0, r=0, t=30, b=0),
             paper_bgcolor='#1a1b26'
         )
