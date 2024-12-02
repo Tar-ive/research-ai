@@ -4,12 +4,9 @@ networkx
 plotly
 requests
 python-dotenv
-<<<<<<< Updated upstream
 scipy 
 groq
-=======
 statsmodels
 numpy 
 pandas
 
->>>>>>> Stashed changes
